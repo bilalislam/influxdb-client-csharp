@@ -1,0 +1,39 @@
+# JetBrains Rider
+.idea/
+*.iml
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+coverage.opencover.xml
+coverlet/
+coveralls/
+trx2junit/
+TestResults/
+DotnetVersion/
+
+# Visual Studio 2015/2017 cache/options directory
+.vs/
+
+### macOS ###
+# General
+.DS_Store
+.AppleDouble
+.LSOverride
+
+**/target/**
+
+**/.openapi-generator-ignore
+**/.openapi-generator/**
+
+/test.sh
+/influxdb-client-csharp.sln.DotSettings.user
+global.json

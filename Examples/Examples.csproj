@@ -1,0 +1,21 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFrameworks>netcoreapp2.2;netcoreapp3.1</TargetFrameworks>
+        <LangVersion>8</LangVersion>
+        <VersionPrefix>1.17.0</VersionPrefix>
+        <VersionSuffix>dev</VersionSuffix>
+        <IsPackable>false</IsPackable>
+        
+        <AssemblyOriginatorKeyFile>../Keys/Key.snk</AssemblyOriginatorKeyFile>
+        <SignAssembly>true</SignAssembly>
+        <StartupObject>Examples.FluxExample</StartupObject>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\Client.Legacy\Client.Legacy.csproj" />
+      <ProjectReference Include="..\Client\Client.csproj" />
+    </ItemGroup>
+
+</Project>

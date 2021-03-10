@@ -1,0 +1,186 @@
+version: 2.1
+
+commands:
+  influxdb-onboarding:
+    steps:
+      - run:
+          name: "Post onBoarding request to InfluxDB 2"
+          command: ./Scripts/influxdb-onboarding.sh
+  prepare:
+    description: "Prepare environment to tests"
+    steps:
+      - checkout
+      - influxdb-onboarding
+  client-test:
+    parameters:
+      dotnet-image:
+        type: string
+    steps:
+      - run:
+          name: "Running tests"
+          command: ./Scripts/ci-test.sh
+      - run:
+          name: "Converting test results to Junit format"
+          when: on_fail
+          command: ./trx2junit/trx2junit ./**/TestResults/*.trx
+  
+  storing-test-results:
+    steps:
+      - run:
+          name: "Copying test results"
+          when: always
+          command: |
+            mkdir test-results
+            mkdir test-results/client-legacy
+            cp -r Client.Legacy.Test/TestResults/*.xml test-results/client-legacy || true
+            mkdir test-results/client
+            cp -r Client.Test/TestResults/*.xml test-results/client || true
+      - store_test_results:
+          path: test-results
+  
+  storing-artifacts:
+    steps:
+      - run:
+          name: "Copying artifacts"
+          command: |
+            mkdir artifacts
+            cp -r Client.Core/bin/Debug/*/*.dll artifacts/
+            cp -r Client.Legacy/bin/Debug/*/*.dll artifacts/
+            cp -r Client/bin/Debug/*/*.dll artifacts/
+      - store_artifacts:
+          path: artifacts
+
+jobs:
+  tests-dotnet:
+    parameters:
+      dotnet-image:
+        type: string
+        default: &default-dotnet-image "mcr.microsoft.com/dotnet/core/sdk:3.1"
+      dotnet-target-version:
+        type: string
+        default: "netstandard2.1"
+      influxdb-image:
+        type: string
+        default: &default-influxdb-image "influxdb:latest"
+    docker:
+      - image: << parameters.dotnet-image >>
+        environment:
+          NET_TARGET_VERSION: << parameters.dotnet-target-version >>
+      - image: &influx-image << parameters.influxdb-image >>
+        environment:
+          INFLUXD_HTTP_BIND_ADDRESS: :9999
+      - image: &influx-image << parameters.influxdb-image >>
+        name: influxdb_v2_onboarding
+        environment:
+          INFLUXD_HTTP_BIND_ADDRESS: :9999
+      - image: influxdb:1.8-alpine
+        environment:
+          INFLUXDB_HTTP_FLUX_ENABLED: true
+    environment:
+      INFLUXDB_2_ONBOARDING_IP: influxdb_v2_onboarding
+      INFLUXDB_2_ONBOARDING_PORT: 9999
+    steps:
+      - prepare
+      - client-test:
+          dotnet-image: << parameters.dotnet-image >>
+      - storing-test-results
+      - storing-artifacts
+      - run:
+          name: "Collecting coverage reports"
+          command: bash <(curl -s https://codecov.io/bash) || echo "Codecov did not collect coverage reports"
+
+  tests-windows:
+    machine:
+      image: "windows-server-2019-vs2019:stable"
+      resource_class: windows.medium
+      shell: bash
+    steps:
+      - checkout
+#      - run:
+#          name: "Enable Docker experimental to run Linux containers"
+#          command: |
+#            $progressPreference = 'silentlyContinue'
+#            Install-WindowsFeature Containers
+#            Set-Content -Value "`{`"experimental`":true`}" -Path C:\ProgramData\docker\config\daemon.json
+#            restart-service docker
+#            docker info
+#      - run:
+#          name: "Install Linux Kernel"
+#          command: |
+#            $progressPreference = 'silentlyContinue'
+#            cd 'C:\Program Files\'
+#            mkdir "Linux Containers"
+#            cd '.\Linux Containers\'
+#            curl -OutFile release.zip https://github.com/linuxkit/lcow/releases/download/v4.14.35-v0.3.9/release.zip
+#            Expand-Archive -DestinationPath . .\release.zip
+#            rm release.zip
+      - run: choco install influxdb1 --version=1.8.0
+      - run: export INFLUXDB_HTTP_FLUX_ENABLED=true 
+      - run:
+          name: "Start InfluxDB"
+          command: /c/influxdata/influxdb-1.8.0-1/influxd.exe -config "Scripts/influxdb.conf"
+          background: true
+      - run: dotnet nuget locals --clear all
+      - run: dotnet restore --no-cache --force
+      - run: dotnet build
+      - run: dotnet test Client.Legacy.Test/Client.Legacy.Test.csproj --no-build
+      
+  deploy-preview:
+    parameters:
+      influxdb-image:
+        type: string
+        default: *default-influxdb-image
+    docker:
+      - image: *default-dotnet-image
+    steps:
+      - run:
+          name: Early return if this build is from a forked repository
+          command: |
+            if [[ $CIRCLE_PROJECT_USERNAME != "influxdata" ]]; then
+              echo "Nothing to do for forked repositories, so marking this step successful"
+              circleci step halt
+            fi
+      - checkout
+      - run:
+          name: Deploying To Preview repository
+          command: ./Scripts/ci-deploy-snapshot.sh
+
+workflows:
+  version: 2
+  build:
+    jobs:
+      - tests-dotnet:
+          name: dotnet-2.2
+          dotnet-image: "mcr.microsoft.com/dotnet/core/sdk:2.2"
+          dotnet-target-version: "netstandard2.0"
+      - tests-dotnet:
+          name: dotnet-3.1-nightly
+          influxdb-image: "quay.io/influxdb/influxdb:nightly"
+      - tests-dotnet:
+          name: dotnet-3.0
+          dotnet-image: "mcr.microsoft.com/dotnet/core/sdk:3.0"
+      - tests-dotnet:
+          name: dotnet-3.1
+      - tests-windows:
+          name: dotnet-windows
+      - deploy-preview:
+          requires:
+            - dotnet-2.2
+            - dotnet-3.1-nightly
+            - dotnet-3.0
+            - dotnet-3.1
+            - dotnet-windows
+          filters:
+            branches:
+              only: master
+
+  nightly:
+    triggers:
+      - schedule:
+          cron: "0 0 * * *"
+          filters:
+            branches:
+              only:
+                - master
+    jobs:
+      - tests-dotnet
